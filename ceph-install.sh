@@ -55,6 +55,7 @@ update_ceph_script()
 	sudo sed -i s/bin/"local\/bin"/g /etc/init/ceph-mds.conf
 	sudo sed -i s/bin/"local\/bin"/g /etc/init/ceph-mon.conf
 	sudo sed -i s/bin/"local\/bin"/g /etc/init/ceph-osd.conf
+	sudo sed -i s/libexec/"local\/libexec"/g /etc/init/ceph-osd.conf
 	sudo sed -i s/"ETCDIR=\/usr\/local\/etc\/ceph"/"ETCDIR=\/etc\/ceph"/ /etc/init.d/ceph
 }
 
