@@ -1,11 +1,13 @@
 #!/bin/bash
-# curl --insecure --location --request POST 'https://172.16.2.249:8443/oauth/token?username=admin&password=Hello123&grant_type=password' --header 'Authorization: Basic aGNkLWNsaWVudDpoY2Qtc2VjcmV0'
-# {"access_token":"21358ebb-e452-48c4-800b-2638d4daa9cc","token_type":"bearer","refresh_token":"b9d05e60-14aa-4bb2-b1ce-001e97b7852d","expires_in":42648,"scope":"read write"}
-TOKEN=0e991065-4f5a-47c8-8bf0-978359e43c72
 MGMT_IP=172.16.2.246
 MGMT_PORT=8443
-SVIP=192.168.2.246
+SVIP=192.168.6.246
 SVIP_PORT=3260
+
+GET_TOKEN_RET=$(curl --insecure --location --request POST 'https://'$MGMT_IP':'$MGMT_PORT'/oauth/token?username=admin&password=Hello123&grant_type=password' --header 'Authorization: Basic aGNkLWNsaWVudDpoY2Qtc2VjcmV0')
+# {"access_token":"21358ebb-e452-48c4-800b-2638d4daa9cc","token_type":"bearer","refresh_token":"b9d05e60-14aa-4bb2-b1ce-001e97b7852d","expires_in":42648,"scope":"read write"}
+TOKEN=$(echo $GET_TOKEN_RET | jq --raw-output .access_token)
+echo "* get token=$TOKEN"
 
 function create_cluster() {
     HOSTS=$(curl --insecure --location --request GET 'https://'$MGMT_IP':'$MGMT_PORT'/v1/hosts' --header 'Authorization: Bearer '${TOKEN} | jq '[.data | .[] | .hostId]')
@@ -52,6 +54,10 @@ function create_cluster() {
 # create volumes
 function create_volumes() {
     # VOL_SIZE=8796093022208
+    # Get cluster id
+    local GET_CLUSTER_RET=$(curl --insecure --location --request GET 'https://'$MGMT_IP':'$MGMT_PORT'/v1/clusters' --header 'Authorization: Bearer '$TOKEN)
+    local CLUSTER_ID=$(echo $GET_CLUSTER_RET | jq --raw-output .data[0].clusterId)
+    echo "* get cluster id: $CLUSTER_ID"
     local VOL_NUM=$1
     local VOL_SIZE=$2
     CREATE_VOLUME_JSON_TEMPLATE="
@@ -151,13 +157,17 @@ function create_initiator() {
 
 # create volume access group
 function create_vag() {
+    # Get cluster id
+    local GET_CLUSTER_RET=$(curl --insecure --location --request GET 'https://'$MGMT_IP':'$MGMT_PORT'/v1/clusters' --header 'Authorization: Bearer '$TOKEN)
+    local CLUSTER_ID=$(echo $GET_CLUSTER_RET | jq --raw-output .data[0].clusterId)
+    echo "* get cluster id: $CLUSTER_ID"
     # Get volumes in cluster
     local VOLUME_ID_ARRAY=$(curl --insecure --location --request GET 'https://'$MGMT_IP':'$MGMT_PORT'/v1/volumes/'$CLUSTER_ID --header 'Authorization: Bearer '$TOKEN | jq '[{id: .data[].volumeId}]')
     echo "* get volumes:\n$VOLUME_ID_ARRAY"
+    # Get initiator id
     local GET_INITIATOR_RET=$(curl --insecure --location --request GET 'https://'$MGMT_IP':'$MGMT_PORT'/v1/initiators' --header 'Authorization: Bearer '$TOKEN)
     local INITIATOR_ID=$(echo $GET_INITIATOR_RET | jq --raw-output .data[0].initiatorId)
-    echo "* get initiator $INITIATOR_ID"
-    local CLUSTER_ID=$1
+    echo "* get initiator id: $INITIATOR_ID"
     CREATE_VOL_ACCESS_GROUP_JSON_TEMPLATE="
     {          
         \"volumeAccessGroupName\": \"\",
@@ -174,7 +184,8 @@ function create_vag() {
         ]
     }
     "
-    local CREATE_VAG_INPUT=$(echo $CREATE_VOL_ACCESS_GROUP_JSON_TEMPLATE | jq ".volumes=$VOLUME_ID_ARRAY | .volumeAccessGroupName=\"vag1\"")
+    local vag_name=$1
+    local CREATE_VAG_INPUT=$(echo $CREATE_VOL_ACCESS_GROUP_JSON_TEMPLATE | jq ".volumes=$VOLUME_ID_ARRAY | .volumeAccessGroupName=\"$vag_name\"")
     echo $CREATE_VAG_INPUT
     local CREATE_VAG_RET=$(curl --insecure --location --request POST 'https://'$MGMT_IP':'$MGMT_PORT'/v1/volume-access-groups' --header 'Authorization: Bearer '$TOKEN -d "$CREATE_VAG_INPUT" -H "Content-Type: application/json")
     echo $CREATE_VAG_RET | jq
@@ -220,10 +231,18 @@ function discover_login_volumes () {
     done
 }
 
-# create_cluster
-CLUSTER_ID=f085e0da-48d4-4d0b-843d-32599f1d9c89
-# create_volumes 6 8796093022208 
-# create_initiator
-INITIATOR_ID=623527d6-7be6-4599-870b-8e9f88ed495b
-# create_vag $CLUSTER_ID
+# logout volumes
+function logout_volumes () {
+    VOL_IQNS=$(sudo iscsiadm -m discovery -t st -p $SVIP:$SVIP_PORT | awk '{print $2}')
+    for iqn in $VOL_IQNS; do
+       sudo iscsiadm -m node -p $SVIP:$SVIP_PORT -T $iqn -u
+    done
+    sudo iscsiadm -m session -u
+}
+
+create_cluster
+create_volumes 20 8796093022208 
+create_initiator
+create_vag vag1
 discover_login_volumes
+# logout_volumes
